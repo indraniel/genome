@@ -40,6 +40,12 @@ class Genome::Model::Build::Command::View {
             default_value => 0,
             doc => 'Display build notes.'
         },
+        profile => {
+            is => 'Boolean',
+            is_optional => 1,
+            default_value => 0,
+            doc => 'Include detailed LSF metrics in workflow display. (Works only for non-active builds).'
+        },
     ],
 };
 
@@ -94,8 +100,12 @@ sub write_report {
     }
 
     my $workflow = $self->build->newest_workflow_instance;
-    $self->_display_workflow($handle, $workflow);
+    $self->_display_workflow($handle, $workflow, $self->profile);
     $self->_display_logs($handle, $workflow);
+
+    if ($self->profile) {
+        $self->_display_overall_lsf_resource_usage($handle);
+    }
 
     1;
 }

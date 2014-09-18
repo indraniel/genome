@@ -43,6 +43,9 @@ our %STATUS_COLORS = (
     crashed     => "red",
     failed      => "red",
     unstartable => "red",
+
+    'DONE'      => "green",
+    'EXIT'      => "red",
 );
 
 sub _status_colors {

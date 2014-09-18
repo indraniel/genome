@@ -10,6 +10,8 @@ use Workflow;
 
 use DateTime::Format::Strptime;
 use Date::Calc "Delta_DHMS";
+use JSON;
+use YAML::XS;
 
 class Genome::Command::WorkflowMixin {
     is => ['Genome::Command::WithColor'],
@@ -63,7 +65,7 @@ my %CONNECTOR_NAMES = (
 
 
 sub _display_workflow {
-    my ($self, $handle, $workflow) = @_;
+    my ($self, $handle, $workflow, $profile_flag) = @_;
 
     return unless $self->workflow;
 
@@ -75,7 +77,7 @@ sub _display_workflow {
     my $datetime_parser = DateTime::Format::Strptime->new(
             pattern => '%Y-%m-%d %H:%M:%S',
             on_error => 'croak');
-    $self->_display_workflow_children($handle, $workflow, $datetime_parser);
+    $self->_display_workflow_children($handle, $workflow, $datetime_parser, $profile_flag);
     return;
 }
 
@@ -111,21 +113,21 @@ EOS
 }
 
 sub _display_workflow_children {
-    my ($self, $handle, $workflow, $datetime_parser) = @_;
+    my ($self, $handle, $workflow, $datetime_parser, $profile_flag) = @_;
 
     print $handle $self->_color_dim($self->_format_workflow_child_line(
             "ID", "Status", "LSF ID", "Start Time", "Time Elapsed", "Name", "Start Time"));
 
     my $ie = $workflow->current;
     my $start_time = $self->_clean_up_timestamp($ie->start_time);
-    $self->_display_workflow_child($handle, $workflow, $datetime_parser, 0,
+    $self->_display_workflow_child($handle, $profile_flag, $workflow, $datetime_parser, 0,
             $start_time);
 
     1;
 }
 
 sub _display_workflow_child {
-    my ($self, $handle, $child, $datetime_parser, $nesting_level,
+    my ($self, $handle, $profile_flag, $child, $datetime_parser, $nesting_level,
             $prev_start_time) = @_;
 
     my $status = $child->status;
@@ -137,6 +139,22 @@ sub _display_workflow_child {
         print $handle $self->_format_workflow_child_line($child->id, $status,
             $child->current->dispatch_identifier, $start_time, $elapsed_time,
             ('  'x$nesting_level) . $child->name, $prev_start_time);
+
+        # note or show additional LSF resource usage stats (only for done jobs)
+        my $dispatch_id = $child->current->dispatch_identifier;
+        if ($profile_flag && $dispatch_id && $dispatch_id =~ /^\d+$/ && $status eq 'done') {
+
+            # collect LSF stats
+            my $lsf_stats = $self->_fetch_lsf_resource_stats($dispatch_id);
+
+            # record overall LSF stats
+            $self->_track_overall_lsf_resource_stats($lsf_stats);
+
+            # display LSF stat details
+            if (keys %{$lsf_stats}) {
+                $self->_display_lsf_resource_stats($handle, $lsf_stats);
+            }
+        }
     }
 
     if ($self->depth < 0 || $nesting_level < $self->depth) {
@@ -150,6 +168,7 @@ sub _display_workflow_child {
                     datetime_parser => $datetime_parser,
                     nesting_level => $nesting_level + 1,
                     start_time => $start_time,
+                    profile_flag => $profile_flag
                 );
             }
         }
@@ -217,6 +236,7 @@ sub summarize {
         datetime_parser => { isa => 'DateTime::Format::Strptime', },
         nesting_level => { type => SCALAR, },
         start_time => { type => SCALAR, },
+        profile_flag => { type => SCALAR, },
     });
     if ($self->_should_summarize($p{child_bunch})) {
         $self->_write_summary(
@@ -227,7 +247,7 @@ sub summarize {
     } else {
         for my $child (@{$p{child_bunch}}) {
             $self->_display_workflow_child(
-                $p{handle}, $child, $p{datetime_parser},
+                $p{handle}, $p{'profile_flag'}, $child, $p{datetime_parser},
                 $p{nesting_level}, $p{start_time},
             );
         }
@@ -533,6 +553,207 @@ sub _print_error_log_preview {
         print $handle $self->_color_pair("  First Error", $preview) . "\n";
     } else {
         print $handle $self->_color_pair("  Last Line", $preview) . "\n";
+    }
+}
+
+sub _fetch_lsf_resource_stats {
+    my ($self, $dispatch_id) = @_;
+
+    my $bmetrica = '/gscuser/idas/bin/bmetrica';
+    my $cmd = "$bmetrica jobstats $dispatch_id";
+#    print "---> execing '$cmd'\n";
+    my $json = qx($cmd);
+#    print "---> JSON String\n", $json, "\n";
+    my $data = JSON::decode_json($json);
+    my $job_stats = $data->[0];
+#    print "---> Perl Hash\n", Dump($job_stats), "\n";
+    return $job_stats;
+}
+
+sub _display_lsf_resource_stats {
+    my ($self, $handle, $stats) = @_;
+
+    my $format_str = <<EOS;
+    %s
+    %s %s
+    %s %s
+    %s %s
+    %s
+    %s %s
+
+    %s
+    %s
+    %s
+    %s
+    
+    %s
+    %s
+    %s
+    %s
+
+    %s
+    %s
+    %s
+
+    %s
+    %s
+    %s
+    %s
+    %s
+
+    %s
+
+EOS
+
+    my $mem_reqd   = $self->_lsf_memory_display($stats->{'MemRequested'});
+    my $mem_resrvd = $self->_lsf_memory_display($stats->{'MemReserved'});
+
+    my $mem_used   = $self->_lsf_memory_display($stats->{'MaxMem'});
+    my $swp_used   = $self->_lsf_memory_display($stats->{'MaxSwap'});
+
+    my $res_requirements = $self->_lsf_resource_display($stats->{'ResRequirements'});
+
+    my $cpu_time = $self->_lsf_timing_display($stats->{'CpuUsed'});
+    my $run_time = $self->_lsf_timing_display($stats->{'RunTime'});
+    my $sys_time = $self->_lsf_timing_display($stats->{'SysTime'});
+    my $usr_time = $self->_lsf_timing_display($stats->{'UserTime'});
+
+    print $handle sprintf($format_str,
+        $self->_color_heading('LSF Basic Info'),
+        map {$self->_pad_right($_, $self->COLUMN_WIDTH)} (
+            $self->_color_pair('Job ID', $stats->{'JobId'}),
+            $self->_color_pair('Job PID', $stats->{'JobPid'}),
+            $self->_color_pair('Submitter', $stats->{'User'}),
+            $self->_color_pair('Executor', $stats->{'ExecUser'}),
+            $self->_color_pair('Queue', $stats->{'Queue'}),
+            $self->_color_pair('Execution Host', $stats->{'ExecHost'}),
+            $self->_color_pair('Submit Time', $stats->{'SubmitTime'}),
+            $self->_color_pair('Start Time', $stats->{'StartTime'}),
+            $self->_color_pair('End Time', $stats->{'EndTime'}),
+        ),
+
+        $self->_color_heading('LSF Submission Info'),
+        $self->_color_pair('Mem Requested', $mem_reqd),
+        $self->_color_pair('Mem Reserved', $mem_resrvd),
+        $self->_color_pair('Resource Requirements', $res_requirements),
+
+        $self->_color_heading('Host Metrics'),
+        $self->_color_pair('# Nodes', $stats->{'NumNodes'}),
+        $self->_color_pair('# PIDs Used', $stats->{'NumPids'}),
+        $self->_color_pair('# Threads', $stats->{'NumThreads'}),
+
+        $self->_color_heading('Memory Usage'),
+        $self->_color_pair('Mem Used', $mem_used),
+        $self->_color_pair('Swp Used', $swp_used),
+
+        $self->_color_heading('System Timings'),
+        $self->_color_pair('CPU Time', $cpu_time),
+        $self->_color_pair('Run Time', $run_time),
+        $self->_color_pair('Sys Time', $sys_time),
+        $self->_color_pair('Usr Time', $usr_time),
+
+        $self->_color_pair(
+            'Efficiency (CPU Utilization)',
+            sprintf("%.2f", $stats->{'Efficiency'})
+        ),
+   );
+}
+
+sub _lsf_resource_display {
+    my ($self, $resource) = @_;
+    $resource ||= '';
+    $resource =~ s/\\u003e/>/;
+    $DB::single = 1;
+    return $resource;
+}
+
+sub _lsf_timing_display {
+    my ($self, $elapsed_secs) = @_;
+    $elapsed_secs ||= 0;
+    my ($secs, $mins, $hrs, $days) = ($elapsed_secs,
+                                      $elapsed_secs/60,
+                                      $elapsed_secs/60/60,
+                                      $elapsed_secs/60/60/24);
+
+    my $timings = sprintf("%.2f (secs) %.2f (mins) %.2f (hrs) %.2f (days)",
+                          $secs, $mins, $hrs, $days);
+    return $timings;
+}
+
+sub _lsf_memory_display {
+    my ($self, $max_mem_kb) = @_;
+    $max_mem_kb ||= 0;
+    my ($mem_kb, $mem_mb, $mem_gb) = ($max_mem_kb, $max_mem_kb/1024, $max_mem_kb/1024/1024);
+    my $mem = sprintf("%.2f (kb) %.2f (mb) %.2f (gb)", $mem_kb, $mem_mb, $mem_gb);
+    return $mem;
+}
+
+{
+    my ($total_mem_kb, $total_swap_kb) = (0, 0);
+    my ($total_cpu_time, $total_run_time, $total_sys_time, $total_usr_time) =
+      (0, 0, 0, 0);
+
+    sub _track_overall_lsf_resource_stats {
+        my ($self, $job_stats) = @_;
+        
+        # Memory Stats
+        my $mem = $job_stats->{'MaxMem'} || 0;
+        my $swp = $job_stats->{'MaxSwap'} || 0;
+
+        $total_mem_kb += $mem;
+        $total_swap_kb += $swp;
+
+        # Timing Stats
+        my $cpu = $job_stats->{'CpuUsed'} || 0;
+        my $run = $job_stats->{'RunTime'} || 0;
+        my $sys = $job_stats->{'SysTime'} || 0;
+        my $usr = $job_stats->{'UserTime'} || 0;
+
+        $total_cpu_time += $cpu;
+        $total_run_time += $run;
+        $total_sys_time += $sys;
+        $total_usr_time += $usr;
+
+        
+    }
+
+    sub _display_overall_lsf_resource_usage {
+        my ($self, $handle) = @_;
+
+        # format the results
+        my $mem_used = $self->_lsf_memory_display($total_mem_kb);
+        my $swp_used = $self->_lsf_memory_display($total_swap_kb);
+
+        my $cpu_time = $self->_lsf_timing_display($total_cpu_time);
+        my $run_time = $self->_lsf_timing_display($total_run_time);
+        my $sys_time = $self->_lsf_timing_display($total_sys_time);
+        my $usr_time = $self->_lsf_timing_display($total_usr_time);
+
+        my $format_str = <<EOS;
+
+    %s
+    %s
+    %s
+    
+    %s
+    %s
+    %s
+    %s
+    %s
+EOS
+
+        print $handle $self->_color_heading('Overall Build LSF Usage'), "\n";
+        print $handle sprintf($format_str,
+            $self->_color_heading('Memory Usage'),
+            $self->_color_pair('Mem Used', $mem_used),
+            $self->_color_pair('Swp Used', $swp_used),
+
+            $self->_color_heading('System Timings'),
+            $self->_color_pair('CPU Time', $cpu_time),
+            $self->_color_pair('Run Time', $run_time),
+            $self->_color_pair('Sys Time', $sys_time),
+            $self->_color_pair('Usr Time', $usr_time),
+        );
     }
 }
 

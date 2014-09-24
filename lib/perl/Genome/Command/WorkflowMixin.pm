@@ -142,7 +142,7 @@ sub _display_workflow_child {
 
         # note or show additional LSF resource usage stats (only for done jobs)
         my $dispatch_id = $child->current->dispatch_identifier;
-        if ($profile_flag && $dispatch_id && $dispatch_id =~ /^\d+$/ && $status eq 'done') {
+        if ($profile_flag && $dispatch_id && $dispatch_id =~ /^\d+$/ && $status =~ /(done|crashed)/) {
 
             # collect LSF stats
             my $lsf_stats = $self->_fetch_lsf_resource_stats($dispatch_id);

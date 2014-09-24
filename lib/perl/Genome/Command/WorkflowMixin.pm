@@ -151,7 +151,7 @@ sub _display_workflow_child {
             $self->_track_overall_lsf_resource_stats($lsf_stats);
 
             # display LSF stat details
-            if (keys %{$lsf_stats}) {
+            if ((keys %{$lsf_stats}) && ($profile_flag ne 'summary') ) {
                 $self->_display_lsf_resource_stats($handle, $lsf_stats);
             }
         }
@@ -742,7 +742,10 @@ sub _lsf_memory_display {
     %s
 EOS
 
-        print $handle $self->_color_heading('Overall Build LSF Usage'), "\n";
+        print $handle "\n", 
+                      $self->_color_heading('Overall Build LSF Usage'),
+                      "\n";
+
         print $handle sprintf($format_str,
             $self->_color_heading('Memory Usage'),
             $self->_color_pair('Mem Used', $mem_used),

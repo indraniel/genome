@@ -46,6 +46,12 @@ class Genome::Model::Build::Command::View {
             default_value => 0,
             doc => 'Include detailed LSF metrics in workflow display. (Works only for non-active builds).'
         },
+        'sprofile' => {
+            is => 'Boolean',
+            is_optional => 1,
+            default_value => 0,
+            doc => 'Include summary LSF metrics in workflow display. (Works only for non-active builds).'
+        },
     ],
 };
 
@@ -100,6 +106,8 @@ sub write_report {
     }
 
     my $workflow = $self->build->newest_workflow_instance;
+    
+    $self->profile('summary') if $self->sprofile;
     $self->_display_workflow($handle, $workflow, $self->profile);
     $self->_display_logs($handle, $workflow);
 

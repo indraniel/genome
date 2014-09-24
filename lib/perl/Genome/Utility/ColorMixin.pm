@@ -44,6 +44,7 @@ our %STATUS_COLORS = (
     failed      => "red",
     unstartable => "red",
 
+    # These are some LSF statuses
     'DONE'      => "green",
     'EXIT'      => "red",
 );

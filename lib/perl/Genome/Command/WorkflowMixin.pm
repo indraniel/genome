@@ -116,7 +116,7 @@ sub _display_workflow_children {
     my ($self, $handle, $workflow, $datetime_parser, $profile_flag) = @_;
 
     print $handle $self->_color_dim($self->_format_workflow_child_line(
-            "ID", "Status", "LSF ID", "Start Time", "Time Elapsed", "Name", "Start Time"));
+            "ID", "Status", "LSF ID", "Start Time", "End Time", "Time Elapsed", "Name", "Start Time"));
 
     my $ie = $workflow->current;
     my $start_time = $self->_clean_up_timestamp($ie->start_time);
@@ -135,9 +135,11 @@ sub _display_workflow_child {
     my ($start_time, $elapsed_time) = $self->_resolve_child_times(
         $child->start_time, $child->end_time, $status, $datetime_parser);
 
+    my $end_time = $self->_clean_up_timestamp($child->end_time);
+
     if ($self->connectors || !$self->_is_connector($child->name)) {
         print $handle $self->_format_workflow_child_line($child->id, $status,
-            $child->current->dispatch_identifier, $start_time, $elapsed_time,
+            $child->current->dispatch_identifier, $start_time, $end_time, $elapsed_time,
             ('  'x$nesting_level) . $child->name, $prev_start_time);
 
         # note or show additional LSF resource usage stats (only for done jobs)
@@ -360,13 +362,14 @@ sub _resolve_running_child_end_time {
 }
 
 sub _format_workflow_child_line {
-    my ($self, $id, $status, $dispatch_id, $start_time, $elapsed_time, $name, $prev_start_time) = @_;
+    my ($self, $id, $status, $dispatch_id, $start_time, $end_time, $elapsed_time, $name, $prev_start_time) = @_;
     $dispatch_id = $self->_format_dispatch_id($dispatch_id);
-    return sprintf("%s %s %s %s %s  %s\n",
+    return sprintf("%s %s %s %s %-19s %s  %s\n",
         $self->_pad_right($id, 9),
         $self->_status_color($self->_pad_right($status, 9)),
         $dispatch_id,
         $self->_color_time_since_prev_start_time($start_time, $prev_start_time, 19),
+        $end_time,
         $self->_workflow_elapsed_color(
             $self->_pad_left($elapsed_time, 13), $name, $dispatch_id),
         $self->_workflow_name_color($name));

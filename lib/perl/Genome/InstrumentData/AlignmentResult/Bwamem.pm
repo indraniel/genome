@@ -9,6 +9,7 @@ use File::Copy qw/move/;
 use Path::Class;
 use Genome;
 use Getopt::Long;
+use version 0.77;
 
 class Genome::InstrumentData::AlignmentResult::Bwamem {
     is => 'Genome::InstrumentData::AlignmentResult',
@@ -169,6 +170,29 @@ sub _run_aligner {
     # Run mem
     $self->debug_message("Running bwa mem.");
 
+    my $minimum_bwa_version_for_unix_piping = version->parse('0.7.7');
+    my $bwa_version = version->parse($self->aligner_version);
+
+    if ($bwa_version >= $minimum_bwa_version_for_unix_piping) {
+        $self->debug_message(
+            "Run bwa mem pipeline via "
+            . "Genome::Model::Tools::Bwa::RunMem "
+            . "(full unix pipes approach)"
+        );
+        $self->_stream_bwamem_v2(
+            'inputs' => \@input_paths,
+            'log_path' => $log_path
+        );
+
+        # clean up the FASTQs in /tmp
+        $self->debug_message("bwa mem command finished");
+        $self->debug_message("Removing input FASTQs in tmp scratch space");
+        $self->show_temporary_input_files_queue();
+        $self->clear_temporary_input_files_queue();
+
+        return 1;
+    }
+
     my $full_command = sprintf '%s mem %s %s %s 2>> %s',
         $cmd_path, $param_string, $reference_fasta_path,
         (join ' ', @input_paths), $log_path;
@@ -192,6 +216,36 @@ sub _run_aligner {
     $self->_sort_sam($out_sam);
 
     return 1;
+}
+
+sub _stream_bwa_mem_v2 {
+    my ($self, %args) = @_;
+    my @inputs = @{$args{'inputs'}};
+    my $log = $args{'log_path'};
+
+    my $reference_fasta_path = $self->get_reference_sequence_index->full_consensus_path('fa');
+    my $tmp_dir  = $self->temp_scratch_directory;
+    my $out = $tmp_dir . '/all_sequences.bam';
+
+    my $samtools_version = $self->samtools_version
+      or die "[err] samtools version not specified!\n";
+
+    my $param_hash = $self->decomposed_aligner_params;
+    my $param_string = $self->_param_hash_to_string($param_hash);
+    $param_string =~ s/-t/--num-threads/;
+
+    my $runmem = Genome::Model::Tools::Bwa::RunMem->create(
+        'samtools_version' => $samtools_version,
+        'temp_dir' => $tmp_dir,
+        'bwa_version' => $self->aligner_version,
+        'input_fastqs' => \@inputs,
+        'output_file' => $out,
+        'aligner_params' => $param_string,
+        'aligner_log_path' => $log,
+        'num_threads' => 4
+    );
+
+    $runmem->execute;
 }
 
 # Run bwa mem and stream through AddReadGroupTag

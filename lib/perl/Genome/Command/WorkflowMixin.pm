@@ -560,7 +560,7 @@ sub _fetch_lsf_resource_stats {
     my ($self, $dispatch_id) = @_;
 
     my $bmetrica = '/gscuser/idas/bin/bmetrica';
-    my $cmd = "$bmetrica jobstats $dispatch_id";
+    my $cmd = "$bmetrica jobstats --json $dispatch_id";
 #    print "---> execing '$cmd'\n";
     my $json = qx($cmd);
 #    print "---> JSON String\n", $json, "\n";

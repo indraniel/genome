@@ -9,7 +9,6 @@ experts:
         insertion_centric: 1
     vep:
         ensembl_version: 75
-        reference_version: GRCh37
         custom_annotation_tags:
             - ON_TARGET
             - SEG_DUP
@@ -22,7 +21,6 @@ experts:
         plugins_version: 1
         joinx_version: 1.9
         short_name: 0
-        allow_same_file: 0
 reports:
     'full':
         filters:
